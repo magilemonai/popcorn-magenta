@@ -1,0 +1,1724 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>GREG'S ADVENTURE</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+canvas { image-rendering: pixelated; image-rendering: crisp-edges; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ============================================================
+// GREG'S ADVENTURE - A Game Greg Did Not Consent To
+// ============================================================
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = 800;
+canvas.height = 500;
+
+function resize() {
+  const scale = Math.min(window.innerWidth / 800, window.innerHeight / 500);
+  canvas.style.width = (800 * scale) + 'px';
+  canvas.style.height = (500 * scale) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ==================== CONSTANTS ====================
+const TILE = 32;
+const GRAVITY = 1800;
+const PLAYER_SPEED = 220;
+const PLAYER_JUMP = -520;
+const PLAYER_W = 20;
+const PLAYER_H = 30;
+
+// ==================== INPUT ====================
+const keys = {};
+const jp = {}; // just pressed
+window.addEventListener('keydown', e => {
+  e.preventDefault();
+  if (!keys[e.code]) jp[e.code] = true;
+  keys[e.code] = true;
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ==================== SOUND ====================
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+}
+function playSound(type) {
+  ensureAudio();
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  const t = audioCtx.currentTime;
+  switch(type) {
+    case 'jump':
+      osc.type = 'square'; osc.frequency.setValueAtTime(200, t);
+      osc.frequency.exponentialRampToValueAtTime(600, t + 0.15);
+      gain.gain.setValueAtTime(0.12, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+      osc.start(t); osc.stop(t + 0.15); break;
+    case 'doublejump':
+      osc.type = 'square'; osc.frequency.setValueAtTime(400, t);
+      osc.frequency.exponentialRampToValueAtTime(900, t + 0.12);
+      gain.gain.setValueAtTime(0.12, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.12);
+      osc.start(t); osc.stop(t + 0.12); break;
+    case 'coin':
+      osc.type = 'square'; osc.frequency.setValueAtTime(500, t);
+      osc.frequency.setValueAtTime(800, t + 0.05);
+      gain.gain.setValueAtTime(0.08, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.12);
+      osc.start(t); osc.stop(t + 0.12); break;
+    case 'hurt':
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(300, t);
+      osc.frequency.exponentialRampToValueAtTime(100, t + 0.3);
+      gain.gain.setValueAtTime(0.15, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.3);
+      osc.start(t); osc.stop(t + 0.3); break;
+    case 'stomp':
+      osc.type = 'square'; osc.frequency.setValueAtTime(400, t);
+      osc.frequency.exponentialRampToValueAtTime(100, t + 0.1);
+      gain.gain.setValueAtTime(0.15, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+      osc.start(t); osc.stop(t + 0.15); break;
+    case 'blip':
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(180 + Math.random() * 120, t);
+      gain.gain.setValueAtTime(0.04, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.04);
+      osc.start(t); osc.stop(t + 0.04); break;
+    case 'powerup':
+      osc.type = 'square';
+      [300,400,500,800].forEach((f,i) => osc.frequency.setValueAtTime(f, t + i*0.1));
+      gain.gain.setValueAtTime(0.12, t); gain.gain.setValueAtTime(0.12, t+0.35);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.45);
+      osc.start(t); osc.stop(t + 0.45); break;
+    case 'quack':
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(600, t);
+      osc.frequency.setValueAtTime(400, t + 0.05); osc.frequency.setValueAtTime(600, t + 0.1);
+      gain.gain.setValueAtTime(0.1, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+      osc.start(t); osc.stop(t + 0.15); break;
+    case 'win':
+      osc.type = 'square';
+      [400,500,600,800].forEach((f,i) => osc.frequency.setValueAtTime(f, t + i*0.12));
+      gain.gain.setValueAtTime(0.12, t); gain.gain.setValueAtTime(0.12, t+0.4);
+      gain.gain.exponentialRampToValueAtTime(0.01, t + 0.55);
+      osc.start(t); osc.stop(t + 0.55); break;
+    case 'boom':
+      osc.type = 'sawtooth'; osc.frequency.setValueAtTime(100, t);
+      osc.frequency.exponentialRampToValueAtTime(30, t + 0.4);
+      gain.gain.setValueAtTime(0.25, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.4);
+      osc.start(t); osc.stop(t + 0.4); break;
+    case 'select':
+      osc.type = 'square'; osc.frequency.setValueAtTime(400, t);
+      osc.frequency.setValueAtTime(600, t + 0.06);
+      gain.gain.setValueAtTime(0.1, t); gain.gain.exponentialRampToValueAtTime(0.01, t + 0.12);
+      osc.start(t); osc.stop(t + 0.12); break;
+  }
+}
+
+// ==================== CAMERA ====================
+const cam = { x: 0, y: 0, sx: 0, sy: 0, shake: 0 };
+function updateCam(dt, tx, ty, lw, lh) {
+  cam.x += (tx - canvas.width/2 - cam.x) * 6 * dt;
+  cam.y += (ty - canvas.height/2 - cam.y) * 6 * dt;
+  cam.x = Math.max(0, Math.min(cam.x, lw * TILE - canvas.width));
+  cam.y = Math.max(0, Math.min(cam.y, lh * TILE - canvas.height));
+  if (cam.shake > 0) {
+    cam.sx = (Math.random() - 0.5) * cam.shake * 2;
+    cam.sy = (Math.random() - 0.5) * cam.shake * 2;
+    cam.shake *= 0.88;
+    if (cam.shake < 0.3) cam.shake = 0;
+  } else { cam.sx = 0; cam.sy = 0; }
+}
+
+// ==================== PARTICLES ====================
+const parts = [];
+function emitParts(x, y, col, n, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * spd;
+    parts.push({ x, y, vx: Math.cos(a)*s, vy: Math.sin(a)*s - spd*0.5,
+      life: 0.4 + Math.random()*0.5, max: 0.4 + Math.random()*0.5,
+      col, sz: 2 + Math.random()*4 });
+  }
+}
+function updateParts(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i]; p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 500*dt;
+    p.life -= dt; if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    ctx.globalAlpha = p.life / p.max;
+    ctx.fillStyle = p.col;
+    ctx.fillRect(p.x - cam.x + cam.sx - p.sz/2, p.y - cam.y + cam.sy - p.sz/2, p.sz, p.sz);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ==================== DIALOGUE ====================
+let dlgQueue = [];
+let dlg = null;
+let dlgIdx = 0;
+let dlgTime = 0;
+let dlgWait = 0;
+let dlgBlock = false;
+let dlgSndT = 0;
+
+function say(speaker, text, opts = {}) {
+  dlgQueue.push({
+    speaker, text,
+    block: opts.block || false,
+    dur: opts.dur || 2.0,
+    color: speaker === 'N' ? '#FFD700' : '#FFF',
+    bg: speaker === 'N' ? 'rgba(50,0,80,0.92)' : 'rgba(30,30,30,0.92)',
+    name: speaker === 'N' ? '\u2726 THE NARRATOR \u2726' : 'Greg',
+    cb: opts.cb || null
+  });
+}
+
+function updateDlg(dt) {
+  if (!dlg) {
+    if (dlgQueue.length > 0) {
+      dlg = dlgQueue.shift(); dlgIdx = 0; dlgTime = 0; dlgWait = 0;
+      dlgBlock = dlg.block;
+    }
+    return;
+  }
+  dlgTime += dt;
+  const cps = dlg.speaker === 'N' ? 50 : 38;
+  const target = Math.floor(dlgTime * cps);
+  dlgSndT += dt;
+  if (target > dlgIdx && dlgSndT > 0.05) { playSound('blip'); dlgSndT = 0; }
+  dlgIdx = Math.min(target, dlg.text.length);
+  if (dlgIdx < dlg.text.length) {
+    if (jp['Space'] || jp['Enter']) dlgIdx = dlg.text.length;
+  } else {
+    dlgWait += dt;
+    if (dlgWait > dlg.dur || jp['Space'] || jp['Enter']) {
+      if (dlg.cb) dlg.cb();
+      dlg = null; dlgBlock = false;
+    }
+  }
+}
+
+function drawDlg() {
+  if (!dlg) return;
+  const d = dlg;
+  const txt = d.text.substring(0, dlgIdx);
+  const bx = 50, by = canvas.height - 120, bw = canvas.width - 100, bh = 100;
+  ctx.fillStyle = d.bg; ctx.fillRect(bx, by, bw, bh);
+  ctx.strokeStyle = d.color; ctx.lineWidth = 2; ctx.strokeRect(bx, by, bw, bh);
+  ctx.fillStyle = d.color; ctx.font = 'bold 13px monospace';
+  ctx.fillText(d.name, bx + 12, by + 20);
+  ctx.fillStyle = '#FFF'; ctx.font = '13px monospace';
+  const words = txt.split(' '); let line = '', ly = by + 42;
+  for (const w of words) {
+    const test = line + w + ' ';
+    if (ctx.measureText(test).width > bw - 30 && line) {
+      ctx.fillText(line, bx + 12, ly); line = w + ' '; ly += 18;
+    } else line = test;
+  }
+  ctx.fillText(line, bx + 12, ly);
+  if (dlgIdx >= d.text.length && Math.sin(Date.now()/200) > 0) {
+    ctx.fillStyle = d.color; ctx.fillText('\u25B6', bx + bw - 25, by + bh - 12);
+  }
+}
+
+// ==================== GAME STATE ====================
+let state = 'title';
+let lvlNum = 0;
+let tiles = [];
+let lvlW = 0, lvlH = 0;
+let ents = [];
+let player = null;
+let exposureBucks = 0;
+let willToLive = 3;
+let lvlTime = 0;
+let titleTime = 0;
+let fadeAlpha = 0;
+let fadeTarget = 0;
+let fadeCb = null;
+let triggered = {};
+let signs = [];
+let lvlIntroT = 0;
+let deathCount = 0;
+let boss = null;
+let bossHP = 0;
+let cafMode = false;
+let cafTimer = 0;
+let fakeLag = false;
+let glitch = false;
+let glitchT = 0;
+let gravFlip = false;
+let bsod = false;
+let bsodT = 0;
+let endT = 0;
+let credT = 0;
+let duckWink = false;
+
+// ==================== TITLE SCREEN ====================
+let titleDuckBob = 0;
+let subtitleAlpha = 0;
+
+function updateTitle(dt) {
+  titleTime += dt;
+  titleDuckBob = Math.sin(titleTime * 2) * 5;
+  subtitleAlpha = Math.min(1, Math.max(0, (titleTime - 1.5) * 0.8));
+  if (titleTime > 2 && (jp['Enter'] || jp['Space'])) {
+    playSound('select');
+    fadeTarget = 1;
+    fadeCb = () => { startLevel(0); state = 'playing'; fadeTarget = 0; };
+  }
+}
+
+function drawTitle() {
+  // Dramatic sky background
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#1a0a2e'); grad.addColorStop(0.5, '#2d1b69');
+  grad.addColorStop(1, '#0f0f23');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Fake stars
+  ctx.fillStyle = '#FFF';
+  for (let i = 0; i < 60; i++) {
+    const sx = (Math.sin(i*127.1) * 0.5 + 0.5) * canvas.width;
+    const sy = (Math.cos(i*311.7) * 0.5 + 0.5) * canvas.height * 0.6;
+    const blink = Math.sin(titleTime * 2 + i) * 0.5 + 0.5;
+    ctx.globalAlpha = blink * 0.7;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  ctx.globalAlpha = 1;
+
+  // Title
+  ctx.textAlign = 'center';
+  const glow = Math.sin(titleTime * 3) * 0.3 + 0.7;
+  ctx.fillStyle = `rgba(255, 215, 0, ${glow})`;
+  ctx.font = 'bold 52px serif';
+  ctx.fillText("GREG'S ADVENTURE", canvas.width/2, 150);
+
+  // Subtitle
+  ctx.globalAlpha = subtitleAlpha;
+  ctx.fillStyle = '#AAA';
+  ctx.font = 'italic 18px serif';
+  ctx.fillText('(Greg did not consent to this adventure)', canvas.width/2, 185);
+  ctx.globalAlpha = 1;
+
+  // Duck
+  const dx = canvas.width/2, dy = 280 + titleDuckBob;
+  drawDuck(dx, dy, 2);
+
+  // QUACKTHAR label
+  if (titleTime > 3) {
+    ctx.globalAlpha = Math.min(1, titleTime - 3);
+    ctx.fillStyle = '#F44';
+    ctx.font = 'bold 11px monospace';
+    ctx.fillText('QUACKTHAR THE DESTROYER', dx, dy + 40);
+    ctx.globalAlpha = 1;
+  }
+
+  // Press enter
+  if (titleTime > 2) {
+    const blink = Math.sin(titleTime * 4) > 0;
+    if (blink) {
+      ctx.fillStyle = '#FFF';
+      ctx.font = '16px monospace';
+      ctx.fillText('Press ENTER to begin', canvas.width/2, 420);
+      ctx.fillStyle = '#888';
+      ctx.font = '11px monospace';
+      ctx.fillText('(Greg: "...do I have to?")', canvas.width/2, 445);
+    }
+  }
+
+  ctx.textAlign = 'left';
+}
+
+// ==================== DRAW HELPERS ====================
+function drawDuck(x, y, scale) {
+  const s = scale || 1;
+  // Body
+  ctx.fillStyle = '#FFF';
+  ctx.beginPath(); ctx.ellipse(x, y, 14*s, 12*s, 0, 0, Math.PI*2); ctx.fill();
+  // Head
+  ctx.beginPath(); ctx.arc(x + 10*s, y - 10*s, 8*s, 0, Math.PI*2); ctx.fill();
+  // Beak
+  ctx.fillStyle = '#FFA500';
+  ctx.beginPath(); ctx.moveTo(x+16*s, y-12*s); ctx.lineTo(x+24*s, y-10*s);
+  ctx.lineTo(x+16*s, y-8*s); ctx.fill();
+  // Eye
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.arc(x+12*s, y-12*s, 2*s, 0, Math.PI*2); ctx.fill();
+}
+
+function drawGreg(x, y, flip, worried, walking, frame) {
+  const sx = x - cam.x + cam.sx;
+  const sy = y - cam.y + cam.sy;
+  ctx.save();
+  ctx.translate(sx + PLAYER_W/2, sy + PLAYER_H);
+  if (flip) ctx.scale(-1, 1);
+
+  // Legs
+  ctx.fillStyle = '#444';
+  if (walking) {
+    const step = Math.sin(frame * 10) * 4;
+    ctx.fillRect(-6, -4, 5, 8 + step);
+    ctx.fillRect(2, -4, 5, 8 - step);
+  } else {
+    ctx.fillRect(-6, -4, 5, 8);
+    ctx.fillRect(2, -4, 5, 8);
+  }
+
+  // Body (shirt)
+  ctx.fillStyle = '#D4C5A9';
+  ctx.fillRect(-PLAYER_W/2, -PLAYER_H + 6, PLAYER_W, PLAYER_H - 10);
+
+  // Tie
+  ctx.fillStyle = '#C00';
+  ctx.beginPath();
+  ctx.moveTo(0, -PLAYER_H + 10);
+  ctx.lineTo(-3, -PLAYER_H + 16);
+  ctx.lineTo(0, -PLAYER_H + 22);
+  ctx.lineTo(3, -PLAYER_H + 16);
+  ctx.fill();
+
+  // Head
+  ctx.fillStyle = '#FDBCB4';
+  ctx.fillRect(-7, -PLAYER_H - 6, 14, 14);
+
+  // Hair
+  ctx.fillStyle = '#654321';
+  ctx.fillRect(-7, -PLAYER_H - 8, 14, 4);
+
+  // Glasses
+  ctx.strokeStyle = '#333';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-6, -PLAYER_H - 2, 5, 4);
+  ctx.strokeRect(1, -PLAYER_H - 2, 5, 4);
+  ctx.beginPath(); ctx.moveTo(-1, -PLAYER_H); ctx.lineTo(1, -PLAYER_H); ctx.stroke();
+
+  // Eyes behind glasses
+  ctx.fillStyle = '#000';
+  ctx.fillRect(-4, -PLAYER_H, 2, 2);
+  ctx.fillRect(2, -PLAYER_H, 2, 2);
+
+  // Worried eyebrows
+  if (worried) {
+    ctx.strokeStyle = '#654321'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(-6, -PLAYER_H - 3); ctx.lineTo(-2, -PLAYER_H - 1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6, -PLAYER_H - 3); ctx.lineTo(2, -PLAYER_H - 1); ctx.stroke();
+  }
+
+  // Mouth
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+  if (worried) {
+    ctx.beginPath(); ctx.arc(0, -PLAYER_H + 7, 3, 0.2, Math.PI - 0.2); ctx.stroke();
+  } else {
+    ctx.beginPath(); ctx.moveTo(-3, -PLAYER_H + 6); ctx.lineTo(3, -PLAYER_H + 6); ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ==================== LEVEL DATA ====================
+const LEVELS = [
+  // Level 0: The Onboarding
+  {
+    name: 'CHAPTER 1: THE ONBOARDING',
+    sub: '("I didn\'t apply for this")',
+    bg: ['#87CEEB', '#E0F0FF'],
+    tileCol: '#5B8C2A',
+    tileSide: '#4A7A1E',
+    map: [
+      '                                                                                    ',
+      '                                                                                    ',
+      '                                                                                    ',
+      '                                                                                    ',
+      '                                                                                    ',
+      '                                                                                    ',
+      '                                                                c c c                ',
+      '                                      c                       #######               ',
+      '                                     ###            c c                    c     G   ',
+      '            c c c       c                          #####       t t t       #   ####  ',
+      ' P                     ###    d                                           ##         ',
+      '####   ######   ####  #####  ####   #####   ####  #######  ##########   ####  #######',
+      '####   ######   ####  #####  ####   #####   ####  #######  ##########   ####  #######',
+    ],
+    triggers: [
+      { x: 2, y: 8, id: 'intro' },
+      { x: 9, y: 8, id: 'move' },
+      { x: 15, y: 8, id: 'jump' },
+      { x: 21, y: 7, id: 'coins' },
+      { x: 28, y: 8, id: 'duck' },
+      { x: 40, y: 7, id: 'double' },
+      { x: 55, y: 5, id: 'trap' },
+      { x: 72, y: 6, id: 'exit' },
+    ],
+    dialogues: {
+      intro: [
+        ['N', 'WELCOME, BRAVE HERO, TO YOUR GRAND DESTINY!'],
+        ['G', 'I\'m an accountant. I was doing my taxes.'],
+        ['N', 'SILENCE! Use ARROW KEYS to walk toward your FATE!'],
+        ['G', 'I just want to go home.'],
+      ],
+      move: [
+        ['N', 'YES! ONWARD! Feel the wind in your... tie.'],
+      ],
+      jump: [
+        ['N', 'Press SPACE to LEAP across the CHASM OF DESPAIR!'],
+        ['G', 'That\'s a small hole.'],
+        ['N', 'CHASM. OF. DESPAIR.'],
+      ],
+      coins: [
+        ['N', 'Collect EXPOSURE BUCKS\u2122 for... exposure!'],
+        ['G', 'Are these worth anything?'],
+        ['N', 'They\'re worth EXPOSURE, Greg.'],
+        ['G', 'So no.'],
+      ],
+      duck: [
+        ['N', 'BEHOLD! QUACKTHAR THE DESTROYER! Slayer of realms! Devourer of-'],
+        ['G', 'That\'s a duck.'],
+        ['N', 'QUACKTHAR HAS CONSUMED ENTIRE CIVILIZATIONS!'],
+        ['G', 'It\'s just standing there.'],
+        ['N', '...menacingly.'],
+      ],
+      double: [
+        ['N', 'Press SPACE again mid-air to DOUBLE JUMP!'],
+        ['G', 'That violates several laws of physics.'],
+        ['N', 'THIS IS A VIDEO GAME, GREG.'],
+        ['G', 'I\'d like to speak to whoever is in charge.'],
+      ],
+      trap: [
+        ['N', 'Those platforms look TOTALLY trustworthy.'],
+        ['G', 'They\'re literally shaking.'],
+        ['N', 'Trust fall, Greg. Trust fall.'],
+      ],
+      exit: [
+        ['N', 'THE EXIT AWAITS! Your first chapter is COMPLETE!'],
+        ['G', 'Can I go home now?'],
+        ['N', 'LOL no.'],
+      ],
+    }
+  },
+  // Level 1: The Workplace
+  {
+    name: 'CHAPTER 2: THE WORKPLACE',
+    sub: '("This is just an office")',
+    bg: ['#E8E0D0', '#D0C8B8'],
+    tileCol: '#808080',
+    tileSide: '#666',
+    map: [
+      '                                                                                          ',
+      '                                                                                          ',
+      '                                                                                          ',
+      '                      c c                              c c c                               ',
+      '                     -----               c            -------                              ',
+      '          c                              ---                          c c                  ',
+      '         ---     c          c   c                c             c c   -----     c     G     ',
+      '     c          ---        ---------    ---     ---           -----            ---  ####   ',
+      ' P       e              e                   e          e               e            ####   ',
+      '####  ######  ######  ####  #########  ######  #####  ####  #######  ######  ##### #####  ',
+      '####  ######  ######  ####  #########  ######  #####  ####  #######  ######  ##### #####  ',
+    ],
+    triggers: [
+      { x: 2, y: 6, id: 'office_intro' },
+      { x: 20, y: 5, id: 'printer' },
+      { x: 45, y: 5, id: 'meeting' },
+      { x: 70, y: 5, id: 'exit2' },
+    ],
+    dialogues: {
+      office_intro: [
+        ['N', 'CHAPTER TWO: THE FORBIDDEN OFFICE OF ETERNAL-'],
+        ['G', 'This is just an office.'],
+        ['N', 'THE FORBIDDEN OFFICE OF-'],
+        ['G', 'I can see Steve\'s desk from here.'],
+        ['N', 'THOSE ENEMIES ARE DEFINITELY NOT YOUR COWORKERS.'],
+        ['G', 'That one has a lanyard.'],
+      ],
+      printer: [
+        ['N', 'Watch out for the PAPER ELEMENTALS!'],
+        ['G', 'Those are printers. They do this every Monday.'],
+        ['N', 'Jump on them to VANQUISH their ink cartridges!'],
+      ],
+      meeting: [
+        ['N', 'You\'ve entered THE MEETING ROOM OF NO RETURN!'],
+        ['G', 'I have six of these today. I\'m already dead inside.'],
+      ],
+      exit2: [
+        ['N', 'ONWARD TO GREATER CHALLENGES!'],
+        ['G', 'I\'m begging you. Let me file my TPS reports.'],
+      ],
+    }
+  },
+  // Level 2: The Narrator Snaps
+  {
+    name: 'CHAPTER 3: THE NARRATOR SNAPS',
+    sub: '("this is fine")',
+    bg: ['#2a0a3a', '#0a0a2a'],
+    tileCol: '#FF00FF',
+    tileSide: '#AA00AA',
+    platLabels: [
+      { x: 11, y: 5, text: 'DEFINITELY REAL' },
+      { x: 23, y: 6, text: 'NOT A TRAP' },
+      { x: 33, y: 5, text: 'TRUST ME BRO' },
+      { x: 46, y: 6, text: '100% SAFE' },
+      { x: 59, y: 5, text: 'FREE PIZZA \u2192' },
+      { x: 70, y: 6, text: 'almost done lol' },
+    ],
+    map: [
+      '                                                                                          ',
+      '                                                                                          ',
+      '                                                                                          ',
+      '                                 c c c                                                    ',
+      '                         c      #####       c c                                           ',
+      '             c c        ###              c  -----                   c c c                  ',
+      '    c       -----              c        ---          c c           -------       c    G    ',
+      '   ###               c       ---              c    -----     c              c  -----####  ',
+      ' P          e       ###             e        ---          e ####    e       ### e    ####  ',
+      '####   ######  ####  ####   ######   ####  #####  ######  ######  #####  ####  ### #####  ',
+      '####   ######  ####  ####   ######   ####  #####  ######  ######  #####  ####  ### #####  ',
+    ],
+    triggers: [
+      { x: 2, y: 6, id: 'snap_intro' },
+      { x: 18, y: 5, id: 'snap_mid' },
+      { x: 40, y: 5, id: 'snap_glitch' },
+      { x: 60, y: 5, id: 'snap_end' },
+    ],
+    dialogues: {
+      snap_intro: [
+        ['N', 'You know what, Greg? FINE. You want boring? I\'LL GIVE YOU BORING.'],
+        ['G', 'Actually yes, boring sounds great-'],
+        ['N', 'PSYCHE! EVERYTHING IS TERRIBLE NOW!'],
+      ],
+      snap_mid: [
+        ['N', 'HOW DO YOU LIKE THESE PLATFORMS, GREG? I MADE THEM MYSELF.'],
+        ['G', 'They\'re magenta.'],
+        ['N', 'THEY\'RE THE COLOR OF MY RAGE.'],
+      ],
+      snap_glitch: [
+        ['N', 'I\'m going to spawn SO MANY ENEMIES right now.'],
+        ['G', 'Please don\'t.'],
+        ['N', 'TOO LATE! ENEMIES EVERYWHERE! MWAHAHA!'],
+        ['G', 'I\'m going to HR about this.'],
+        ['N', '...wait why is everything lagging OH NO-'],
+      ],
+      snap_end: [
+        ['N', 'Fine. ONE more level. But it\'s a BOSS FIGHT.'],
+        ['G', 'A what?'],
+        ['N', 'YOUR ANNUAL PERFORMANCE REVIEW.'],
+        ['G', 'Oh no. Oh NO.'],
+      ],
+    }
+  },
+  // Level 3: Boss - Annual Performance Review
+  {
+    name: 'ANNUAL PERFORMANCE REVIEW',
+    sub: '(oh god)',
+    bg: ['#1a3a1a', '#0a200a'],
+    tileCol: '#00AA00',
+    tileSide: '#008800',
+    map: [
+      '                                                  ',
+      '                                                  ',
+      '                                                  ',
+      '                                                  ',
+      '        -----              -----                  ',
+      '                                                  ',
+      '                  -----                           ',
+      '                        B                         ',
+      '    P                                             ',
+      '##################################################',
+      '##################################################',
+    ],
+    isBoss: true,
+    triggers: [
+      { x: 8, y: 6, id: 'boss_intro' },
+    ],
+    dialogues: {
+      boss_intro: [
+        ['N', 'BEHOLD! YOUR ANNUAL PERFORMANCE REVIEW!'],
+        ['G', 'My performance has been FINE. I hit all my KPIs.'],
+        ['N', 'THE SPREADSHEET DISAGREES!'],
+        ['G', 'The spreadsheet is wrong. I have receipts.'],
+        ['N', 'JUMP ON IT TO DELIVER YOUR REBUTTALS!'],
+      ],
+    }
+  }
+];
+
+// ==================== LEVEL LOADING ====================
+function startLevel(num) {
+  lvlNum = num;
+  const lvl = LEVELS[num];
+  tiles = [];
+  ents = [];
+  signs = [];
+  triggered = {};
+  lvlTime = 0;
+  cafMode = false;
+  cafTimer = 0;
+  fakeLag = false;
+  glitch = false;
+  gravFlip = false;
+  bsod = false;
+  boss = null;
+  bossHP = 0;
+  parts.length = 0;
+  dlgQueue.length = 0;
+  dlg = null;
+  dlgBlock = false;
+
+  const map = lvl.map;
+  lvlH = map.length;
+  lvlW = map[0].length;
+
+  for (let row = 0; row < lvlH; row++) {
+    tiles[row] = [];
+    for (let col = 0; col < lvlW; col++) {
+      const ch = map[row][col];
+      tiles[row][col] = 0;
+      if (ch === '#') tiles[row][col] = 1;
+      if (ch === '-') tiles[row][col] = 2; // one-way platform
+      if (ch === 'P') {
+        player = {
+          x: col * TILE, y: row * TILE - PLAYER_H + TILE,
+          vx: 0, vy: 0, grounded: false, facing: 1, jumps: 0,
+          coyote: 0, jumpBuf: 0, frame: 0, walking: false,
+          worried: false, iframes: 0, dead: false
+        };
+      }
+      if (ch === 'G') {
+        ents.push({ type: 'goal', x: col * TILE, y: row * TILE, w: TILE, h: TILE });
+      }
+      if (ch === 'c') {
+        ents.push({ type: 'coin', x: col * TILE + 8, y: row * TILE + 8, w: 16, h: 16, bob: Math.random() * Math.PI * 2, collected: false });
+      }
+      if (ch === 'd') {
+        ents.push({ type: 'duck', x: col * TILE, y: row * TILE, w: 28, h: 24, quackT: 0 });
+      }
+      if (ch === 'e') {
+        ents.push({ type: 'enemy', x: col * TILE, y: row * TILE, w: 24, h: 24,
+          vx: 60, startX: col * TILE, range: 80, dead: false });
+      }
+      if (ch === 't') {
+        tiles[row][col] = 3; // trap platform
+        ents.push({ type: 'trap', x: col * TILE, y: row * TILE, baseY: row * TILE,
+          row: row, col: col, falling: false, fallT: 0, shakeT: 0 });
+      }
+      if (ch === 'B') {
+        boss = {
+          x: col * TILE - 48, y: row * TILE - 80,
+          w: 128, h: 96, hp: 8, maxHp: 8,
+          phase: 1, attackT: 0, hurtT: 0,
+          vx: 40, dead: false
+        };
+        bossHP = 8;
+      }
+    }
+  }
+
+  cam.x = player.x - canvas.width/2;
+  cam.y = player.y - canvas.height/2;
+  lvlIntroT = 0;
+  if (lvl.sub) say('G', lvl.sub, { dur: 1.2 });
+}
+
+// ==================== COLLISION ====================
+function solid(tx, ty) {
+  if (tx < 0 || tx >= lvlW || ty < 0 || ty >= lvlH) return ty >= lvlH;
+  return tiles[ty][tx] === 1;
+}
+
+function oneWay(tx, ty) {
+  if (tx < 0 || tx >= lvlW || ty < 0 || ty >= lvlH) return false;
+  return tiles[ty][tx] === 2 || tiles[ty][tx] === 3;
+}
+
+function movePlayer(dt) {
+  if (player.dead) return;
+  const p = player;
+
+  // Horizontal
+  if (!dlgBlock) {
+    if (keys['ArrowLeft'] || keys['KeyA']) { p.vx = -PLAYER_SPEED; p.facing = -1; p.walking = true; }
+    else if (keys['ArrowRight'] || keys['KeyD']) { p.vx = PLAYER_SPEED; p.facing = 1; p.walking = true; }
+    else { p.vx = 0; p.walking = false; }
+  } else { p.vx = 0; p.walking = false; }
+
+  // Jump buffer
+  if ((jp['Space'] || jp['ArrowUp'] || jp['KeyW']) && !dlgBlock) p.jumpBuf = 0.1;
+  if (p.jumpBuf > 0) p.jumpBuf -= dt;
+
+  // Coyote time
+  if (p.grounded) { p.coyote = 0.1; p.jumps = 0; }
+  else p.coyote -= dt;
+
+  // Jump
+  if (p.jumpBuf > 0) {
+    if (p.coyote > 0) {
+      p.vy = PLAYER_JUMP;
+      p.coyote = 0; p.jumpBuf = 0; p.jumps = 1;
+      p.grounded = false;
+      playSound('jump');
+      emitParts(p.x + PLAYER_W/2, p.y + PLAYER_H, '#AAA', 5, 80);
+    } else if (p.jumps < 2) {
+      p.vy = PLAYER_JUMP * 0.85;
+      p.jumps = 2; p.jumpBuf = 0;
+      playSound('doublejump');
+      emitParts(p.x + PLAYER_W/2, p.y + PLAYER_H, '#FFA', 8, 100);
+      p.worried = true;
+    }
+  }
+
+  // Variable jump height
+  if ((keys['Space'] || keys['ArrowUp'] || keys['KeyW']) === false && p.vy < 0) {
+    p.vy *= 0.85;
+  }
+
+  // Gravity
+  const grav = cafMode ? GRAVITY * 0.7 : GRAVITY;
+  p.vy += grav * dt;
+  if (p.vy > 800) p.vy = 800;
+
+  // Move X
+  p.x += p.vx * dt * (cafMode ? 1.5 : 1);
+  // Resolve X
+  const left = Math.floor(p.x / TILE);
+  const right = Math.floor((p.x + PLAYER_W - 1) / TILE);
+  const top = Math.floor(p.y / TILE);
+  const bot = Math.floor((p.y + PLAYER_H - 1) / TILE);
+  for (let ty = top; ty <= bot; ty++) {
+    if (solid(left, ty)) { p.x = (left + 1) * TILE; p.vx = 0; }
+    if (solid(right, ty)) { p.x = right * TILE - PLAYER_W; p.vx = 0; }
+  }
+
+  // Move Y
+  const oldY = p.y;
+  p.y += p.vy * dt;
+  p.grounded = false;
+  // Resolve Y
+  const left2 = Math.floor(p.x / TILE);
+  const right2 = Math.floor((p.x + PLAYER_W - 1) / TILE);
+  const top2 = Math.floor(p.y / TILE);
+  const bot2 = Math.floor((p.y + PLAYER_H - 1) / TILE);
+  for (let tx = left2; tx <= right2; tx++) {
+    if (p.vy > 0) {
+      if (solid(tx, bot2)) {
+        p.y = bot2 * TILE - PLAYER_H; p.vy = 0; p.grounded = true; p.worried = false;
+      }
+      // One-way platform: only if falling through top edge
+      if (oneWay(tx, bot2) && oldY + PLAYER_H <= bot2 * TILE + 2) {
+        p.y = bot2 * TILE - PLAYER_H; p.vy = 0; p.grounded = true; p.worried = false;
+      }
+    }
+    if (p.vy < 0 && solid(tx, top2)) {
+      p.y = (top2 + 1) * TILE; p.vy = 0;
+    }
+  }
+
+  // Fall off screen
+  if (p.y > lvlH * TILE + 100) {
+    hurtPlayer();
+    if (!p.dead) { p.x = player.startX || 0; p.y = 0; p.vy = 0; startLevel(lvlNum); }
+  }
+
+  p.frame += dt;
+  if (p.iframes > 0) p.iframes -= dt;
+}
+
+function hurtPlayer() {
+  if (player.iframes > 0) return;
+  willToLive--;
+  player.iframes = 1.5;
+  cam.shake = 8;
+  playSound('hurt');
+  emitParts(player.x + PLAYER_W/2, player.y + PLAYER_H/2, '#F00', 10, 150);
+  deathCount++;
+  if (willToLive <= 0) {
+    willToLive = 3;
+    const deathLines = [
+      [['N', 'You DIED! But I need you for the plot, so... un-die.'], ['G', 'That\'s not how death works.'], ['N', 'MY GAME, MY RULES.']],
+      [['N', 'GAME OVER! Just kidding. Budget doesn\'t cover a game over screen.'], ['G', 'What budget?'], ['N', 'EXACTLY.']],
+      [['N', 'You have PERISHED! ...but in a non-canonical way.'], ['G', 'I don\'t even know what canonical means in this context.'], ['N', 'Neither do I! Respawning!']],
+      [['N', 'DEATH COMES FOR US ALL! Except you. You have plot armor.'], ['G', 'I didn\'t ask for plot armor.'], ['N', 'You didn\'t ask for ANY of this, Greg.']],
+      [['N', 'Critical error: protagonist.alive = false. Fixing... fixed!'], ['G', 'Did you just edit my source code?'], ['N', 'I have no idea what you\'re talking about.']],
+    ];
+    const lines = deathLines[Math.floor(Math.random() * deathLines.length)];
+    for (const [sp, txt] of lines) say(sp, txt);
+  }
+}
+
+// ==================== ENTITY UPDATE ====================
+function updateEnts(dt) {
+  for (const e of ents) {
+    if (e.type === 'coin' && !e.collected) {
+      e.bob += dt * 3;
+      // Collect check
+      if (aabb(player, e)) {
+        e.collected = true;
+        exposureBucks++;
+        playSound('coin');
+        emitParts(e.x + 8, e.y + 8, '#FFD700', 6, 100);
+      }
+    }
+    if (e.type === 'coffee' && !e.collected) {
+      e.bob += dt * 3;
+      if (aabb(player, e)) {
+        e.collected = true;
+        cafMode = true;
+        cafTimer = 8;
+        playSound('powerup');
+        cam.shake = 12;
+        emitParts(e.x + 10, e.y + 12, '#8B4513', 15, 150);
+        emitParts(e.x + 10, e.y + 12, '#FFD700', 10, 120);
+        say('N', 'GREG IS FULLY CAFFEINATED! THIS WASN\'T IN THE SCRIPT!');
+        say('G', 'I can see through time.', { dur: 1.2 });
+      }
+    }
+    if (e.type === 'enemy' && !e.dead) {
+      e.x += e.vx * dt;
+      if (e.x > e.startX + e.range || e.x < e.startX - e.range) e.vx *= -1;
+      // Stomp check
+      if (player.vy > 0 && aabb(player, e) && player.y + PLAYER_H < e.y + e.h/2) {
+        e.dead = true;
+        player.vy = PLAYER_JUMP * 0.6;
+        playSound('stomp');
+        cam.shake = 4;
+        emitParts(e.x + e.w/2, e.y + e.h/2, '#FF0', 8, 120);
+      } else if (aabb(player, e) && player.iframes <= 0) {
+        hurtPlayer();
+      }
+    }
+    if (e.type === 'duck') {
+      e.quackT += dt;
+      if (Math.floor(e.quackT) % 4 === 0 && e.quackT % 4 < dt * 2) {
+        playSound('quack');
+      }
+    }
+    if (e.type === 'trap') {
+      // Shake when player is near
+      const dx = Math.abs(player.x - e.x);
+      if (dx < TILE * 2 && !e.falling) e.shakeT += dt;
+      else e.shakeT = 0;
+      // Fall when player stands on it
+      if (dx < TILE && player.y + PLAYER_H <= e.y + 2 && player.y + PLAYER_H >= e.y - 4 && player.grounded && !e.falling) {
+        e.falling = true; e.fallT = 0.5;
+      }
+      if (e.falling) {
+        e.fallT -= dt;
+        if (e.fallT <= 0) {
+          e.y += 300 * dt;
+          if (e.y > lvlH * TILE + 50) {
+            tiles[e.row][e.col] = 0;
+          }
+        }
+      }
+    }
+    if (e.type === 'goal' && !e.reached) {
+      if (aabb(player, e)) {
+        e.reached = true;
+        playSound('win');
+        fadeTarget = 1;
+        fadeCb = () => {
+          if (lvlNum < LEVELS.length - 1) {
+            startLevel(lvlNum + 1);
+            fadeTarget = 0;
+          } else {
+            state = 'ending';
+            endT = 0;
+            fadeTarget = 0;
+          }
+        };
+      }
+    }
+  }
+}
+
+// ==================== BOSS UPDATE ====================
+function updateBoss(dt) {
+  if (!boss || boss.dead) return;
+  const b = boss;
+  b.attackT += dt;
+  if (b.hurtT > 0) b.hurtT -= dt;
+
+  // Move boss
+  b.x += b.vx * dt;
+  if (b.x < TILE * 2 || b.x + b.w > (lvlW - 2) * TILE) b.vx *= -1;
+
+  // Attack: spawn projectiles
+  if (b.attackT > 2) {
+    b.attackT = 0;
+    const px = b.x + b.w/2;
+    const py = b.y + b.h/2;
+    const angle = Math.atan2(player.y - py, player.x - px);
+    ents.push({
+      type: 'proj', x: px, y: py, w: 20, h: 20,
+      vx: Math.cos(angle) * 200, vy: Math.sin(angle) * 200,
+      life: 4, label: b.hp > 4 ? 'PIE CHART' : 'ACTION ITEM'
+    });
+    if (b.hp <= 4) {
+      // Phase 2: extra projectile
+      ents.push({
+        type: 'proj', x: px, y: py, w: 16, h: 16,
+        vx: Math.cos(angle + 0.5) * 180, vy: Math.sin(angle + 0.5) * 180,
+        life: 3, label: 'SYNERGY'
+      });
+    }
+  }
+
+  // Stomp check
+  if (player.vy > 0 && player.y + PLAYER_H < b.y + b.h/2 &&
+      player.x + PLAYER_W > b.x && player.x < b.x + b.w &&
+      player.y + PLAYER_H > b.y) {
+    b.hp--;
+    b.hurtT = 0.3;
+    player.vy = PLAYER_JUMP * 0.7;
+    cam.shake = 10;
+    playSound('stomp');
+    emitParts(b.x + b.w/2, b.y, '#0F0', 15, 200);
+
+    if (b.hp === 4) {
+      say('N', 'THE SPREADSHEET IS ANGRY! PHASE TWO!');
+      say('G', 'It\'s a spreadsheet. It doesn\'t have feelings.');
+      say('N', 'IT HAS FORMULAS, GREG. FORMULAS OF RAGE.');
+      b.vx *= 1.5;
+      // Spawn coffee powerup
+      ents.push({ type: 'coffee', x: 25 * TILE, y: 7 * TILE, w: 20, h: 24, collected: false, bob: 0 });
+      say('N', 'Wait... is that... COFFEE?!');
+      say('G', 'Finally. Something useful.');
+    }
+
+    if (b.hp === 2 && !cafMode) {
+      say('N', 'HOW ARE YOU WINNING?! YOU\'RE AN ACCOUNTANT!');
+      say('G', 'I handle spreadsheets for a LIVING.');
+    }
+
+    if (b.hp <= 0) {
+      b.dead = true;
+      cam.shake = 20;
+      playSound('boom');
+      emitParts(b.x + b.w/2, b.y + b.h/2, '#0F0', 30, 250);
+      emitParts(b.x + b.w/2, b.y + b.h/2, '#FF0', 20, 200);
+      say('N', 'IMPOSSIBLE! THE QUARTERLY PROJECTIONS!');
+      say('G', 'I just closed the spreadsheet.');
+      say('N', 'YOU CAN\'T JUST CLOSE A BOSS FIGHT!');
+      say('G', 'Alt+F4.', { dur: 1.5, cb: () => {
+        fadeTarget = 1;
+        fadeCb = () => { state = 'ending'; endT = 0; fadeTarget = 0; };
+      }});
+    }
+  }
+
+  // Boss hurts player (body contact)
+  if (!b.dead && aabb(player, b) && player.vy <= 0 && player.iframes <= 0) {
+    hurtPlayer();
+  }
+
+  // Update projectiles
+  for (let i = ents.length - 1; i >= 0; i--) {
+    const e = ents[i];
+    if (e.type === 'proj') {
+      e.x += e.vx * dt;
+      e.y += e.vy * dt;
+      e.life -= dt;
+      if (e.life <= 0) { ents.splice(i, 1); continue; }
+      if (aabb(player, e) && player.iframes <= 0) {
+        hurtPlayer();
+        ents.splice(i, 1);
+      }
+    }
+  }
+}
+
+function aabb(a, b) {
+  const ax = a.x || 0, ay = a.y || 0, aw = a.w || PLAYER_W, ah = a.h || PLAYER_H;
+  return ax < b.x + b.w && ax + aw > b.x && ay < b.y + b.h && ay + ah > b.y;
+}
+
+// ==================== TRIGGERS ====================
+function checkTriggers() {
+  const lvl = LEVELS[lvlNum];
+  if (!lvl.triggers) return;
+  for (const tr of lvl.triggers) {
+    if (triggered[tr.id]) continue;
+    const px = player.x / TILE;
+    if (Math.abs(px - tr.x) < 2) {
+      triggered[tr.id] = true;
+      const lines = lvl.dialogues[tr.id];
+      if (lines) {
+        for (const [sp, txt] of lines) {
+          say(sp === 'N' ? 'N' : 'G', txt);
+        }
+      }
+      // Special trigger effects
+      if (tr.id === 'snap_glitch') {
+        // Spawn a bunch of extra enemies for comedy
+        for (let i = 0; i < 6; i++) {
+          ents.push({
+            type: 'enemy', x: (42 + i * 3) * TILE, y: 8 * TILE,
+            w: 24, h: 24, vx: 50 + Math.random() * 60,
+            startX: (42 + i * 3) * TILE, range: 60 + Math.random() * 40, dead: false
+          });
+        }
+        cam.shake = 15;
+      }
+    }
+  }
+}
+
+// ==================== RENDERING ====================
+function drawBg() {
+  const lvl = LEVELS[lvlNum];
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, lvl.bg[0]); grad.addColorStop(1, lvl.bg[1]);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Clouds for level 0
+  if (lvlNum === 0) {
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    for (let i = 0; i < 5; i++) {
+      const cx = ((i * 200 + lvlTime * 15) % (canvas.width + 200)) - 50;
+      const cy = 40 + i * 30;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 25, 0, Math.PI*2);
+      ctx.arc(cx + 20, cy - 8, 20, 0, Math.PI*2);
+      ctx.arc(cx + 40, cy, 22, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+}
+
+function drawTiles() {
+  const lvl = LEVELS[lvlNum];
+  const startCol = Math.max(0, Math.floor(cam.x / TILE));
+  const endCol = Math.min(lvlW, Math.ceil((cam.x + canvas.width) / TILE) + 1);
+  const startRow = Math.max(0, Math.floor(cam.y / TILE));
+  const endRow = Math.min(lvlH, Math.ceil((cam.y + canvas.height) / TILE) + 1);
+
+  for (let row = startRow; row < endRow; row++) {
+    for (let col = startCol; col < endCol; col++) {
+      const t = tiles[row][col];
+      const sx = col * TILE - cam.x + cam.sx;
+      const sy = row * TILE - cam.y + cam.sy;
+      if (t === 1) {
+        ctx.fillStyle = lvl.tileCol;
+        ctx.fillRect(sx, sy, TILE, TILE);
+        ctx.fillStyle = lvl.tileSide;
+        ctx.fillRect(sx, sy, TILE, 4);
+        // Grid lines
+        ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+        ctx.strokeRect(sx, sy, TILE, TILE);
+      }
+      if (t === 2) {
+        ctx.fillStyle = '#AA8844';
+        ctx.fillRect(sx, sy, TILE, 8);
+        ctx.fillStyle = '#886633';
+        ctx.fillRect(sx, sy + 6, TILE, 2);
+      }
+      if (t === 3) {
+        // Trap platform
+        const trap = ents.find(e => e.type === 'trap' && e.row === row && e.col === col);
+        let offY = 0;
+        if (trap) {
+          offY = trap.y - trap.baseY;
+          if (trap.shakeT > 0 && !trap.falling) offY += Math.sin(trap.shakeT * 30) * 2;
+        }
+        ctx.fillStyle = '#CC4444';
+        ctx.fillRect(sx, sy + offY, TILE, 8);
+        ctx.fillStyle = '#AA2222';
+        ctx.fillRect(sx + 2, sy + offY + 2, TILE - 4, 4);
+      }
+    }
+  }
+}
+
+function drawPlatLabels() {
+  const lvl = LEVELS[lvlNum];
+  if (!lvl.platLabels) return;
+  ctx.font = 'bold 8px monospace';
+  ctx.textAlign = 'center';
+  for (const lbl of lvl.platLabels) {
+    const sx = lbl.x * TILE - cam.x + cam.sx + TILE/2;
+    const sy = lbl.y * TILE - cam.y + cam.sy - 8;
+    const bob = Math.sin(lvlTime * 2 + lbl.x) * 3;
+    ctx.fillStyle = '#FF0';
+    ctx.fillText(lbl.text, sx, sy + bob);
+  }
+  ctx.textAlign = 'left';
+}
+
+function drawEnts() {
+  for (const e of ents) {
+    const sx = e.x - cam.x + cam.sx;
+    const sy = e.y - cam.y + cam.sy;
+    if (sx < -50 || sx > canvas.width + 50 || sy < -50 || sy > canvas.height + 50) continue;
+
+    if (e.type === 'coin' && !e.collected) {
+      const by = Math.sin(e.bob) * 4;
+      ctx.fillStyle = '#FFD700';
+      ctx.beginPath();
+      ctx.arc(sx + 8, sy + 8 + by, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#FFF';
+      ctx.font = 'bold 7px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('E$', sx + 8, sy + 11 + by);
+      ctx.textAlign = 'left';
+    }
+
+    if (e.type === 'coffee' && !e.collected) {
+      const by = Math.sin(e.bob) * 5;
+      // Coffee cup
+      ctx.fillStyle = '#FFF';
+      ctx.fillRect(sx + 2, sy + 4 + by, 16, 18);
+      ctx.fillStyle = '#8B4513';
+      ctx.fillRect(sx + 4, sy + 6 + by, 12, 10);
+      // Steam
+      ctx.strokeStyle = 'rgba(200,200,200,0.6)';
+      ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) {
+        const wx = sx + 5 + i * 5;
+        const wy = sy + by;
+        ctx.beginPath();
+        ctx.moveTo(wx, wy);
+        ctx.quadraticCurveTo(wx + 2, wy - 6, wx, wy - 10);
+        ctx.stroke();
+      }
+      // Label
+      ctx.fillStyle = '#FFD700';
+      ctx.font = 'bold 7px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('COFFEE', sx + 10, sy - 2 + by);
+      ctx.textAlign = 'left';
+    }
+
+    if (e.type === 'enemy' && !e.dead) {
+      // Angry coworker / generic enemy
+      ctx.fillStyle = lvlNum === 2 ? '#FF00FF' : '#E44';
+      ctx.fillRect(sx, sy, e.w, e.h);
+      // Face
+      ctx.fillStyle = '#FFF';
+      ctx.fillRect(sx + 4, sy + 6, 5, 5);
+      ctx.fillRect(sx + 14, sy + 6, 5, 5);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(sx + 6, sy + 8, 2, 2);
+      ctx.fillRect(sx + 16, sy + 8, 2, 2);
+      // Angry mouth
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(sx + 6, sy + 18); ctx.lineTo(sx + 12, sy + 15); ctx.lineTo(sx + 18, sy + 18);
+      ctx.stroke();
+      // Lanyard (office level)
+      if (lvlNum === 1) {
+        ctx.fillStyle = '#00F';
+        ctx.fillRect(sx + 10, sy, 3, e.h);
+        ctx.fillStyle = '#FFF';
+        ctx.fillRect(sx + 7, sy + e.h - 8, 10, 8);
+      }
+    }
+
+    if (e.type === 'duck') {
+      drawDuck(sx + 14, sy + 12, 1);
+      // Quackthar label
+      ctx.fillStyle = '#F44';
+      ctx.font = 'bold 7px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('QUACKTHAR', sx + 14, sy - 5);
+      ctx.textAlign = 'left';
+    }
+
+    if (e.type === 'goal') {
+      // Glowing exit door
+      const pulse = Math.sin(lvlTime * 4) * 0.3 + 0.7;
+      ctx.fillStyle = `rgba(0, 255, 100, ${pulse * 0.3})`;
+      ctx.fillRect(sx - 4, sy - 4, TILE + 8, TILE + 8);
+      ctx.fillStyle = '#2A2';
+      ctx.fillRect(sx + 4, sy, TILE - 8, TILE);
+      ctx.fillStyle = '#FFF';
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('EXIT', sx + TILE/2, sy + TILE/2 + 3);
+      ctx.textAlign = 'left';
+    }
+
+    if (e.type === 'proj') {
+      // Spinning projectile
+      ctx.save();
+      ctx.translate(sx + e.w/2, sy + e.h/2);
+      ctx.rotate(lvlTime * 5);
+      if (e.label === 'PIE CHART') {
+        // Pie chart projectile
+        const colors = ['#F44', '#44F', '#4F4', '#FF4'];
+        for (let i = 0; i < 4; i++) {
+          ctx.fillStyle = colors[i];
+          ctx.beginPath();
+          ctx.moveTo(0, 0);
+          ctx.arc(0, 0, e.w/2, i * Math.PI/2, (i+1) * Math.PI/2);
+          ctx.fill();
+        }
+      } else {
+        // Action item / synergy projectile
+        ctx.fillStyle = '#F80';
+        ctx.fillRect(-e.w/2, -e.h/2, e.w, e.h);
+        ctx.fillStyle = '#FFF';
+        ctx.font = 'bold 6px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(e.label, 0, 3);
+        ctx.textAlign = 'left';
+      }
+      ctx.restore();
+    }
+  }
+}
+
+function drawBoss() {
+  if (!boss || boss.dead) return;
+  const b = boss;
+  const sx = b.x - cam.x + cam.sx;
+  const sy = b.y - cam.y + cam.sy;
+
+  // Spreadsheet body
+  const flash = b.hurtT > 0 && Math.sin(b.hurtT * 40) > 0;
+  ctx.fillStyle = flash ? '#FFF' : '#1a472a';
+  ctx.fillRect(sx, sy, b.w, b.h);
+
+  // Grid lines
+  ctx.strokeStyle = '#0F0';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < b.w; i += 16) {
+    ctx.beginPath(); ctx.moveTo(sx + i, sy); ctx.lineTo(sx + i, sy + b.h); ctx.stroke();
+  }
+  for (let i = 0; i < b.h; i += 12) {
+    ctx.beginPath(); ctx.moveTo(sx, sy + i); ctx.lineTo(sx + b.w, sy + i); ctx.stroke();
+  }
+
+  // Cell labels
+  ctx.fillStyle = '#0F0';
+  ctx.font = '8px monospace';
+  ctx.fillText('A1', sx + 4, sy + 10);
+  ctx.fillText('B2', sx + 20, sy + 22);
+  ctx.fillText('=SUM(RAGE)', sx + 4, sy + 34);
+  ctx.fillText('#REF!', sx + 60, sy + 46);
+  ctx.fillText('SYNERGY', sx + 30, sy + 58);
+
+  // Eyes
+  ctx.fillStyle = '#F00';
+  ctx.beginPath(); ctx.arc(sx + 40, sy + 40, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx + 90, sy + 40, 8, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#000';
+  const ex = Math.sign(player.x - b.x) * 3;
+  ctx.beginPath(); ctx.arc(sx + 40 + ex, sy + 40, 3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx + 90 + ex, sy + 40, 3, 0, Math.PI * 2); ctx.fill();
+
+  // Health bar
+  ctx.fillStyle = '#333';
+  ctx.fillRect(sx, sy - 15, b.w, 10);
+  ctx.fillStyle = b.hp > 4 ? '#0F0' : '#F00';
+  ctx.fillRect(sx + 1, sy - 14, (b.w - 2) * (b.hp / b.maxHp), 8);
+  ctx.fillStyle = '#FFF';
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('QUARTERLY PROJECTIONS', sx + b.w/2, sy - 7);
+  ctx.textAlign = 'left';
+}
+
+function drawHUD() {
+  // Will to Live
+  ctx.fillStyle = '#FFF';
+  ctx.font = '14px monospace';
+  ctx.fillText('Will To Live: ', 10, 25);
+  for (let i = 0; i < willToLive; i++) {
+    ctx.fillStyle = '#F44';
+    ctx.fillText('\u2665', 130 + i * 20, 25);
+  }
+
+  // Exposure Bucks
+  ctx.fillStyle = '#FFD700';
+  ctx.font = '14px monospace';
+  ctx.fillText('Exposure Bucks\u2122: ' + exposureBucks + ' (worth: $0.00)', 10, 48);
+
+  // Death counter (appears after first death)
+  if (deathCount > 0) {
+    ctx.fillStyle = '#888';
+    ctx.font = '11px monospace';
+    ctx.fillText('Times Greg Has Suffered: ' + deathCount, 10, 68);
+  }
+
+  // Level name
+  const lvl = LEVELS[lvlNum];
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '11px monospace';
+  ctx.textAlign = 'right';
+  ctx.fillText(lvl.name, canvas.width - 10, 20);
+  ctx.textAlign = 'left';
+
+  // Level intro title card
+  if (lvlIntroT < 3) {
+    const alpha = lvlIntroT < 0.5 ? lvlIntroT * 2 : lvlIntroT > 2.5 ? (3 - lvlIntroT) * 2 : 1;
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, canvas.height/2 - 50, canvas.width, 100);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 28px serif';
+    ctx.fillText(lvl.name, canvas.width/2, canvas.height/2 - 5);
+    ctx.fillStyle = '#AAA';
+    ctx.font = 'italic 16px serif';
+    ctx.fillText(lvl.sub || '', canvas.width/2, canvas.height/2 + 28);
+    ctx.textAlign = 'left';
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawPlayer() {
+  if (player.dead) return;
+  const blink = player.iframes > 0 && Math.sin(player.iframes * 20) > 0;
+  if (blink) return;
+  drawGreg(player.x, player.y, player.facing < 0, player.worried || !player.grounded, player.walking, player.frame);
+}
+
+// ==================== ENDING & CREDITS ====================
+function updateEnding(dt) {
+  endT += dt;
+  if (endT < 1) return;
+  if (endT >= 1 && endT < 1 + dt) {
+    say('G', '*sitting at desk* ...I\'m putting in my two weeks.', { dur: 2.5 });
+    say('N', 'BUT GREG! The sequel! GREG\'S ADVENTURE 2: GREG HARDER!', { dur: 2 });
+    say('G', 'Absolutely not.', { dur: 1.5, cb: () => { state = 'credits'; credT = 0; } });
+  }
+  updateDlg(dt);
+}
+
+function drawEnding() {
+  // Reset camera for ending scene
+  cam.x = 0; cam.y = 0; cam.sx = 0; cam.sy = 0;
+
+  ctx.fillStyle = '#2a2a2a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Fluorescent office lights
+  ctx.fillStyle = 'rgba(255,255,200,0.03)';
+  ctx.fillRect(200, 100, 400, 10);
+
+  // Greg at desk
+  const deskY = 300;
+  // Desk
+  ctx.fillStyle = '#8B7355';
+  ctx.fillRect(250, deskY, 300, 20);
+  ctx.fillRect(260, deskY + 20, 10, 80);
+  ctx.fillRect(530, deskY + 20, 10, 80);
+
+  // Computer
+  ctx.fillStyle = '#333';
+  ctx.fillRect(340, deskY - 80, 120, 80);
+  ctx.fillStyle = '#0a0a2a';
+  ctx.fillRect(345, deskY - 75, 110, 65);
+  ctx.fillStyle = '#0F0';
+  ctx.font = '10px monospace';
+  ctx.fillText('C:\\> EXIT', 355, deskY - 50);
+  ctx.fillText('GOODBYE GREG', 355, deskY - 35);
+
+  // Greg sitting
+  drawGreg(380, deskY - 35, false, true, false, 0);
+
+  // Coffee mug
+  ctx.fillStyle = '#FFF';
+  ctx.fillRect(480, deskY - 20, 15, 18);
+  ctx.fillStyle = '#666';
+  ctx.font = '6px monospace';
+  ctx.fillText('#1', 483, deskY - 6);
+  ctx.fillText('DAD', 481, deskY);
+
+  // Motivational poster
+  ctx.fillStyle = '#444';
+  ctx.fillRect(150, 160, 80, 100);
+  ctx.fillStyle = '#87CEEB';
+  ctx.fillRect(155, 165, 70, 50);
+  ctx.fillStyle = '#FFF';
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('HANG IN', 190, 232);
+  ctx.fillText('THERE', 190, 242);
+  ctx.textAlign = 'left';
+
+  drawDlg();
+}
+
+function updateCredits(dt) {
+  credT += dt;
+  if (credT > 8) { duckWink = true; }
+}
+
+function drawCredits() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#FFF';
+
+  if (credT < 1.5) {
+    ctx.font = '24px monospace';
+    ctx.fillText('CREDITS', canvas.width/2, 200);
+  } else if (credT < 3) {
+    ctx.font = '14px monospace';
+    ctx.fillText('Director, Producer, Writer, Programmer,', canvas.width/2, 150);
+    ctx.fillText('Artist, Sound Designer, QA, Catering:', canvas.width/2, 175);
+    ctx.font = '18px monospace';
+    ctx.fillStyle = '#FFD700';
+    ctx.fillText('THE NARRATOR', canvas.width/2, 210);
+    ctx.fillStyle = '#888';
+    ctx.font = '11px monospace';
+    ctx.fillText('(budget constraints)', canvas.width/2, 235);
+  } else if (credT < 5) {
+    ctx.font = '14px monospace';
+    ctx.fillText('Special Thanks:', canvas.width/2, 170);
+    ctx.font = '16px monospace';
+    ctx.fillText('Greg (involuntarily)', canvas.width/2, 200);
+    ctx.fillText('Quackthar the Destroyer', canvas.width/2, 225);
+    ctx.fillText('That one printer that works sometimes', canvas.width/2, 250);
+  } else if (credT < 7) {
+    ctx.font = '14px monospace';
+    ctx.fillText('No spreadsheets were harmed in the making', canvas.width/2, 180);
+    ctx.fillText('of this game. The pie charts, however,', canvas.width/2, 205);
+    ctx.fillText('were absolutely demolished.', canvas.width/2, 230);
+    ctx.fillStyle = '#888';
+    ctx.font = '11px monospace';
+    ctx.fillText('Total Exposure Bucks earned: ' + exposureBucks, canvas.width/2, 260);
+    ctx.fillText('(Still worth $0.00)', canvas.width/2, 280);
+    ctx.fillText('Times Greg suffered: ' + deathCount, canvas.width/2, 300);
+    ctx.fillText('Greg\'s desire to return: 0%', canvas.width/2, 320);
+  } else {
+    // Post-credits: Duck wink
+    ctx.font = '12px monospace';
+    ctx.fillStyle = '#888';
+    ctx.fillText('oh wait there\'s one more thing', canvas.width/2, 100);
+
+    drawDuck(canvas.width/2, 250, 3);
+
+    // Winking eye (right eye closed)
+    if (duckWink) {
+      ctx.fillStyle = '#FFF';
+      ctx.beginPath(); ctx.arc(canvas.width/2 + 36, 250 - 36, 8, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(canvas.width/2 + 30, 250 - 36);
+      ctx.lineTo(canvas.width/2 + 42, 250 - 36);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#FFD700';
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('QUACKTHAR WILL RETURN', canvas.width/2, 340);
+    ctx.fillStyle = '#888';
+    ctx.font = '11px monospace';
+    ctx.fillText('(Greg will not)', canvas.width/2, 365);
+
+    if (credT > 10) {
+      const blink = Math.sin(credT * 3) > 0;
+      if (blink) {
+        ctx.fillStyle = '#FFF';
+        ctx.font = '14px monospace';
+        ctx.fillText('Press ENTER to subject Greg to this again', canvas.width/2, 440);
+      }
+      if (jp['Enter'] || jp['Space']) {
+        state = 'title'; titleTime = 0; exposureBucks = 0; willToLive = 3;
+      }
+    }
+  }
+
+  ctx.textAlign = 'left';
+}
+
+// ==================== GLITCH EFFECTS (Level 3) ====================
+let fakeErrorShow = false;
+let fakeErrorT = 0;
+let fakeErrorMsg = '';
+const fakeErrors = [
+  'GREG.exe has stopped having fun',
+  'Error 404: Greg\'s enthusiasm not found',
+  'WARNING: Narrator ego exceeding memory limits',
+  'FATAL: Too many enemies (narrator\'s fault)',
+  'Runtime Error: fun.dll is corrupted or missing',
+  'Stack overflow in module: GREG_PATIENCE',
+];
+
+function drawGlitch() {
+  if (lvlNum !== 2) return;
+  glitchT += 0.016;
+
+  // Random color shift
+  if (Math.random() < 0.05) {
+    ctx.fillStyle = `rgba(${Math.random()*255|0}, 0, ${Math.random()*255|0}, 0.15)`;
+    ctx.fillRect(0, Math.random() * canvas.height, canvas.width, 5 + Math.random() * 30);
+  }
+
+  // Occasional screen tear
+  if (Math.random() < 0.01) {
+    const tearY = Math.random() * canvas.height;
+    const tearH = 5 + Math.random() * 15;
+    const imgData = ctx.getImageData(0, tearY, canvas.width, tearH);
+    ctx.putImageData(imgData, 8 + Math.random() * 15, tearY);
+  }
+
+  // Scanlines
+  ctx.fillStyle = 'rgba(0,0,0,0.06)';
+  for (let y = 0; y < canvas.height; y += 3) {
+    ctx.fillRect(0, y, canvas.width, 1);
+  }
+
+  // Random fake error popup
+  if (!fakeErrorShow && Math.random() < 0.003 && lvlTime > 5) {
+    fakeErrorShow = true;
+    fakeErrorT = 3;
+    fakeErrorMsg = fakeErrors[Math.floor(Math.random() * fakeErrors.length)];
+  }
+  if (fakeErrorShow) {
+    fakeErrorT -= 0.016;
+    if (fakeErrorT <= 0) { fakeErrorShow = false; }
+    else {
+      // Draw fake Windows error dialog
+      const ex = 180, ey = 120, ew = 440, eh = 140;
+      ctx.fillStyle = '#C0C0C0'; ctx.fillRect(ex, ey, ew, eh);
+      ctx.fillStyle = '#000080'; ctx.fillRect(ex + 2, ey + 2, ew - 4, 20);
+      ctx.fillStyle = '#FFF'; ctx.font = 'bold 12px monospace';
+      ctx.fillText('  \u2716 Greg\'s Adventure', ex + 5, ey + 16);
+      ctx.fillStyle = '#000'; ctx.font = '12px monospace';
+      // Word wrap the error message
+      ctx.fillText('\u26A0 ' + fakeErrorMsg, ex + 20, ey + 55);
+      // OK button
+      ctx.fillStyle = '#C0C0C0'; ctx.fillRect(ex + ew/2 - 40, ey + eh - 35, 80, 25);
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 1;
+      ctx.strokeRect(ex + ew/2 - 40, ey + eh - 35, 80, 25);
+      ctx.fillStyle = '#000'; ctx.font = '12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('OK (not OK)', ex + ew/2, ey + eh - 18);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  // Occasional brief color invert flash
+  if (Math.random() < 0.005) {
+    ctx.globalCompositeOperation = 'difference';
+    ctx.fillStyle = '#FFF';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}
+
+// ==================== FADE ====================
+function updateFade(dt) {
+  if (fadeAlpha < fadeTarget) {
+    fadeAlpha = Math.min(fadeTarget, fadeAlpha + dt * 2);
+    if (fadeAlpha >= 1 && fadeCb) { const cb = fadeCb; fadeCb = null; cb(); }
+  } else if (fadeAlpha > fadeTarget) {
+    fadeAlpha = Math.max(fadeTarget, fadeAlpha - dt * 2);
+  }
+}
+
+function drawFade() {
+  if (fadeAlpha > 0) {
+    ctx.fillStyle = `rgba(0,0,0,${fadeAlpha})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+}
+
+// ==================== MAIN LOOP ====================
+let lastT = 0;
+
+function loop(ts) {
+  const dt = Math.min((ts - lastT) / 1000, 0.05);
+  lastT = ts;
+
+  // Update
+  switch (state) {
+    case 'title':
+      updateTitle(dt);
+      break;
+    case 'playing':
+      lvlTime += dt;
+      lvlIntroT += dt;
+      if (!dlgBlock) movePlayer(dt);
+      else { player.vx = 0; player.walking = false; }
+      updateEnts(dt);
+      if (cafMode) {
+        cafTimer -= dt;
+        if (cafTimer <= 0) { cafMode = false; }
+      }
+      if (LEVELS[lvlNum].isBoss) updateBoss(dt);
+      checkTriggers();
+      updateCam(dt, player.x + PLAYER_W/2, player.y + PLAYER_H/2, lvlW, lvlH);
+      updateDlg(dt);
+      updateParts(dt);
+      break;
+    case 'ending':
+      updateEnding(dt);
+      break;
+    case 'credits':
+      updateCredits(dt);
+      break;
+  }
+  updateFade(dt);
+
+  // Render
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  switch (state) {
+    case 'title':
+      drawTitle();
+      break;
+    case 'playing':
+      drawBg();
+      drawTiles();
+      drawPlatLabels();
+      drawEnts();
+      if (LEVELS[lvlNum].isBoss) drawBoss();
+      drawPlayer();
+      drawParts();
+      if (cafMode) {
+        // Caffeinated visual effect - golden tint + speed lines
+        ctx.fillStyle = 'rgba(255, 200, 0, 0.08)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Speed lines
+        ctx.strokeStyle = 'rgba(255, 220, 0, 0.15)';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 8; i++) {
+          const ly = Math.random() * canvas.height;
+          ctx.beginPath();
+          ctx.moveTo(0, ly);
+          ctx.lineTo(canvas.width, ly);
+          ctx.stroke();
+        }
+        // CAFFEINATED label
+        ctx.fillStyle = '#FFD700';
+        ctx.font = 'bold 12px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('\u26A1 FULLY CAFFEINATED \u26A1', canvas.width/2, 85);
+        ctx.textAlign = 'left';
+      }
+      if (lvlNum === 2) drawGlitch();
+      drawHUD();
+      drawDlg();
+      break;
+    case 'ending':
+      drawEnding();
+      break;
+    case 'credits':
+      drawCredits();
+      break;
+  }
+  drawFade();
+
+  // Clear justPressed
+  for (const k in jp) delete jp[k];
+
+  requestAnimationFrame(loop);
+}
+
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
