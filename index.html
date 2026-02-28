@@ -918,6 +918,7 @@ function movePlayer(dt) {
 
   // Move Y
   const oldY = p.y;
+  const preVy = p.vy; // capture vy before collision for landing detection
   p.y += p.vy * dt;
   const wasGrounded = p.grounded;
   p.grounded = false;
@@ -954,8 +955,8 @@ function movePlayer(dt) {
     }
   }
 
-  // Landing squash
-  if (p.grounded && !wasGrounded && p.vy === 0) {
+  // Landing squash — only when actually falling with real velocity, not micro-gravity drift
+  if (p.grounded && !wasGrounded && preVy > 100) {
     p.squash = 0.35; // landing squash
     emitParts(p.x + PLAYER_W/2, p.y + PLAYER_H, '#AAA', 3, 40);
   }
