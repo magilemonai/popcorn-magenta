@@ -1,2 +1,2 @@
 # popcorn-magenta
-gonna do another weird one
+comedic side-scrolling platformer about deadpan office worker vs overacting narrator
